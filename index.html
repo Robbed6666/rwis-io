@@ -88,7 +88,7 @@ function connect(){
  saveKeys();base=`rwis/${$('kDev').value.trim()}/`;
  chip('cBroker','wn','CONNECTING');
  cli=mqtt.connect(`wss://${host}:${port}${path}`,{username:$('kUser').value,password:$('kPass').value,
-  clientId:'rwis-remote-'+CID,clean:true,reconnectPeriod:3000,connectTimeout:10000,keepalive:30});
+  clientId:'rwis-remote-'+CID,clean:true,reconnectPeriod:2000,connectTimeout:8000,keepalive:15});
  cli.on('connect',()=>{chip('cBroker','ok','BROKER OK');log('Broker connected');$('conn').open=false;
   cli.subscribe([base+'state',base+'ack',base+'status',base+'cfg'],{qos:1});enable();
   clearInterval(hbT);hbT=setInterval(()=>{if(devOnline)pub({t:'hb',i:0,v:0})},3000)});
@@ -131,6 +131,14 @@ async function saveCfg(){const o={t:'cfg',i:0,v:0,fs:Number($('fsS').value)};
  try{const j=await await_ack(pub(o));$('cfgMsg').textContent=j.ok?'Saved ✓':'Error';log('Settings saved')}
  catch(e){$('cfgMsg').textContent='No reply';log('Settings NOT confirmed')}
  setTimeout(()=>$('cfgMsg').textContent='',2500)}
+
+// ---- mobile resilience: phones freeze sockets in background / on cell handover
+function kick(why){if(!cli)return;log('Reconnecting ('+why+')');lastState=0;cli.reconnect()}
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'||!cli)return;
+ if(!cli.connected||Date.now()-lastState>8000)kick('resumed')});
+window.addEventListener('online',()=>kick('network back'));
+// ESP32 publishes state at least every 5 s; silence for 12 s while 'connected' = dead socket
+setInterval(()=>{if(cli&&cli.connected&&devOnline&&lastState&&Date.now()-lastState>12000)kick('stale link')},2000);
 
 // data-age chip: shows staleness of last state message
 setInterval(()=>{if(!lastState)return;const a=(Date.now()-lastState)/1000;
