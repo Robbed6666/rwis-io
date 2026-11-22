@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RWIS Remote IO — Remote</title>
+<!-- RWIS Remote IO remote client: MQTT over secure WebSocket (EMQX Serverless: port 8084, path /mqtt; HiveMQ Cloud: port 8884, path /mqtt).
+     Host this file anywhere (GitHub Pages, company site) or open it directly on a PC.
+     Robert Edwards FRSA MIEEE — Rapid Welding & Industrial Supplies Ltd -->
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<style>
+:root{--bg:#14171c;--pn:#1e232b;--ln:#2e3540;--tx:#e6e9ee;--mu:#8a93a0;--ok:#2fbf71;--pd:#f0a020;--er:#e5484d;--on:#3b82f6}
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+header{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between;align-items:center;padding:10px 14px;background:#0e1014;border-bottom:1px solid var(--ln)}
+h1{font-size:16px;margin:0}.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-size:12px;padding:3px 9px;border-radius:10px;background:var(--er)}.chip.ok{background:var(--ok);color:#06210f}.chip.wn{background:var(--pd);color:#2a1a00}
+main{padding:10px;display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.pn{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:10px}
+.pn h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu);margin:0 0 8px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.lamp{text-align:center;padding:10px 0;border-radius:6px;background:#2a3039;font-weight:600}.lamp.on{background:var(--ok);color:#06210f}
+button{font:inherit;color:var(--tx);background:#2a3039;border:2px solid var(--ln);border-radius:6px;padding:12px 0;width:100%;font-weight:600;cursor:pointer}
+button:disabled{opacity:.4;cursor:not-allowed}button.on{background:var(--on)}
+.pend{border-color:var(--pd)!important}.ack{border-color:var(--ok)!important}.err{border-color:var(--er)!important}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}.row label{width:58px;color:var(--mu)}
+input[type=range]{flex:1;accent-color:var(--on)}
+input[type=number],input[type=text],input[type=password]{width:84px;background:#11141a;color:var(--tx);border:2px solid var(--ln);border-radius:5px;padding:6px;font-size:15px}
+.wide{flex:1;min-width:160px}.val{font:600 26px ui-monospace,monospace}.sub{color:var(--mu);font-size:12px}
+.adc{display:grid;grid-template-columns:1fr 1fr;gap:8px}.adc div{background:#2a3039;border-radius:6px;padding:8px}
+#log{font:12px ui-monospace,monospace;height:150px;overflow:auto;background:#0e1014;border-radius:5px;padding:6px;white-space:pre}
+.btn2{width:auto;padding:7px 14px;font-size:13px}#fs{color:var(--er);font-weight:600}
+details summary{cursor:pointer;color:var(--mu);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+</style></head><body>
+<header><h1>RWIS Remote IO</h1>
+ <div class="chips"><span class="chip" id="cBroker">BROKER OFF</span><span class="chip" id="cDev">DEVICE ?</span><span class="chip" id="cAge">NO DATA</span></div></header>
+<main>
+<div class="pn" style="grid-column:1/-1"><details id="conn"><summary>Connection</summary>
+ <div class="row"><label>Host</label><input type="text" class="wide" id="kHost" placeholder="xxxxxxxx.ala.eu-central-1.emqxsl.com"></div>
+ <div class="row"><label>WSS port</label><input type="number" id="kPort" value="8084"><label>Path</label><input type="text" id="kPath" value="/mqtt"></div>
+ <div class="row"><label>User</label><input type="text" class="wide" id="kUser"></div>
+ <div class="row"><label>Password</label><input type="password" class="wide" id="kPass"></div>
+ <div class="row"><label>Device ID</label><input type="text" class="wide" id="kDev" value="rwis-io-01"></div>
+ <div class="row"><label></label><input type="checkbox" id="kRem"><span class="sub">Remember password on this device</span></div>
+ <div class="row"><label></label><button class="btn2" id="bConn">Connect</button><button class="btn2" id="bDisc">Disconnect</button></div>
+</details></div>
+<div class="pn"><h2>Digital inputs</h2><div class="g4" id="di"></div></div>
+<div class="pn"><h2>Digital outputs <span id="fs"></span></h2><div class="g4" id="do"></div>
+ <div class="row" style="margin-top:10px"><button class="btn2 ctl" id="bOff">ALL OFF</button></div></div>
+<div class="pn"><h2>Analogue inputs</h2><div class="adc" id="adc"></div></div>
+<div class="pn"><h2>PWM outputs</h2><div id="pwm"></div></div>
+<div class="pn"><h2>Settings</h2><div id="cfg"></div>
+ <div class="row"><label>Failsafe</label><input type="number" id="fsS" min="0" max="3600"> s <span class="sub">(0 = off)</span></div>
+ <div class="row"><button class="btn2 ctl" id="bSave">Save settings</button><span class="sub" id="cfgMsg"></span></div></div>
+<div class="pn"><h2>Command log</h2><div id="log"></div><div class="sub" id="info"></div></div>
+</main>
+<script>
+{
+const $=id=>document.getElementById(id);
+const CID=Math.random().toString(36).slice(2,10);           // identifies this client's ACKs
+const TIMEOUT=3000,TRIES=3;
+let cli=null,base='',seq=0,busy={},waiters={},devOnline=false,lastState=0,hbT=null;
+
+for(let i=0;i<4;i++){$('di').innerHTML+=`<div class="lamp" id="di${i}">DI${i+1}</div>`;
+ $('do').innerHTML+=`<button class="ctl" id="do${i}" data-i="${i}">DO${i+1}</button>`}
+for(let i=0;i<2;i++){
+ $('adc').innerHTML+=`<div><div class="sub">AI${i+1}</div><div class="val" id="av${i}">--</div><div class="sub" id="ar${i}"></div></div>`;
+ $('pwm').innerHTML+=`<div class="row"><label>PWM${i+1}</label><input type="range" class="ctl" id="pd${i}" min="0" max="100" step="0.5"><span id="pp${i}" style="width:52px">0%</span></div>
+  <div class="row"><label>Freq</label><input type="number" id="pf${i}" min="1" max="40000"> Hz <button class="btn2 ctl" id="bf${i}">Set</button></div>`;
+ $('cfg').innerHTML+=`<div class="row"><label>AI${i+1}</label>x<input type="number" step="any" id="cs${i}">+<input type="number" step="any" id="co${i}">
+  <input type="text" id="cu${i}" maxlength="7" style="width:54px"></div>`}
+
+function log(m){const t=new Date().toTimeString().slice(0,8),l=$('log');l.textContent=t+' '+m+'\n'+l.textContent.slice(0,4000)}
+function chip(id,cls,txt){$(id).className='chip '+cls;$(id).textContent=txt}
+function mark(k,c){const e=$(k);if(!e)return;e.classList.remove('pend','ack','err');e.classList.add(c);
+ if(c=='ack')setTimeout(()=>e.classList.remove('ack'),1200)}
+function enable(){const on=!!(cli&&cli.connected&&devOnline);document.querySelectorAll('.ctl').forEach(e=>e.disabled=!on)}
+
+// ---- settings persistence
+function loadKeys(){try{const k=JSON.parse(localStorage.getItem('rwisio')||'{}');
+ ['Host','Port','Path','User','Dev'].forEach(n=>{if(k[n])$('k'+n).value=k[n]});
+ if(k.Pass){$('kPass').value=k.Pass;$('kRem').checked=true}return !!(k.Host&&k.User)}catch(e){return false}}
+function saveKeys(){try{const k={};['Host','Port','Path','User','Dev'].forEach(n=>k[n]=$('k'+n).value);
+ if($('kRem').checked)k.Pass=$('kPass').value;localStorage.setItem('rwisio',JSON.stringify(k))}catch(e){}}
+
+// ---- MQTT
+function connect(){
+ if(cli){cli.end(true);cli=null}
+ const host=$('kHost').value.trim(),port=$('kPort').value,path=$('kPath').value||'/mqtt';
+ if(!host){$('conn').open=true;return}
+ saveKeys();base=`rwis/${$('kDev').value.trim()}/`;
+ chip('cBroker','wn','CONNECTING');
+ cli=mqtt.connect(`wss://${host}:${port}${path}`,{username:$('kUser').value,password:$('kPass').value,
+  clientId:'rwis-remote-'+CID,clean:true,reconnectPeriod:3000,connectTimeout:10000,keepalive:30});
+ cli.on('connect',()=>{chip('cBroker','ok','BROKER OK');log('Broker connected');$('conn').open=false;
+  cli.subscribe([base+'state',base+'ack',base+'status',base+'cfg'],{qos:1});enable();
+  clearInterval(hbT);hbT=setInterval(()=>{if(devOnline)pub({t:'hb',i:0,v:0})},3000)});
+ cli.on('reconnect',()=>chip('cBroker','wn','RECONNECTING'));
+ cli.on('close',()=>{chip('cBroker','','BROKER OFF');enable()});
+ cli.on('error',e=>{log('Broker error: '+e.message);if(/auth|Not authorized|Bad user/i.test(e.message))cli.end(true)});
+ cli.on('message',(topic,buf)=>{const m=buf.toString(),leaf=topic.slice(base.length);
+  if(leaf=='status'){devOnline=m=='online';chip('cDev',devOnline?'ok':'',devOnline?'DEVICE ONLINE':'DEVICE OFFLINE');log('Device '+m);enable();return}
+  let j;try{j=JSON.parse(m)}catch(e){return}
+  if(leaf=='state'){lastState=Date.now();apply(j)}
+  else if(leaf=='cfg')showCfg(j)
+  else if(leaf=='ack'&&j.cid==CID&&waiters[j.seq]){waiters[j.seq](j);delete waiters[j.seq]}});
+}
+function pub(o){const s=++seq;o.seq=s;o.cid=CID;cli.publish(base+'cmd',JSON.stringify(o),{qos:1});return s}
+function await_ack(s){return new Promise((res,rej)=>{waiters[s]=res;setTimeout(()=>{if(waiters[s]){delete waiters[s];rej('timeout')}},TIMEOUT)})}
+
+async function send(t,i,v,tries=0){
+ if(!(cli&&cli.connected)){log('Not connected');return}
+ const k=(t=='do'?'do':t=='pwm'?'pd':'pf')+i,t0=performance.now();busy[k]=1;mark(k,'pend');
+ try{const s=pub({t,i,v:Number(v)});const j=await await_ack(s);const ms=Math.round(performance.now()-t0);
+  if(j.ok){mark(k,'ack');log(`ACK #${s} ${t}${i+1} req=${j.req} act=${j.act} ${ms}ms`)}
+  else{mark(k,'err');log(`NAK #${s} ${t}${i+1} ${j.err} req=${j.req} act=${j.act}`)}}
+ catch(e){if(tries<TRIES-1){log(`retry ${t}${i+1} (${tries+1})`);delete busy[k];return send(t,i,v,tries+1)}
+  mark(k,'err');log(`NO ACK ${t}${i+1} — command not confirmed`)}
+ finally{delete busy[k]}}
+
+function apply(s){
+ s.di.forEach((v,i)=>$('di'+i).classList.toggle('on',!!v));
+ s.do.forEach((v,i)=>{const b=$('do'+i);if(!busy['do'+i]){b.classList.toggle('on',!!v);b.textContent=`DO${i+1} ${v?'ON':'OFF'}`}});
+ s.pwm.forEach((p,i)=>{if(!busy['pd'+i]&&document.activeElement!==$('pd'+i)){$('pd'+i).value=p.pct;$('pp'+i).textContent=p.pct+'%'}
+  if(!busy['pf'+i]&&document.activeElement!==$('pf'+i))$('pf'+i).value=p.f});
+ s.adc.forEach((a,i)=>{$('av'+i).textContent=a.val.toFixed(3)+' '+a.u;$('ar'+i).textContent=`${a.mv} mV  raw ${a.raw}`});
+ $('fs').textContent=s.fsTrip?'FAILSAFE TRIPPED':'';
+ $('info').textContent=`RSSI ${s.rssi} dBm · up ${s.up}s · rev ${s.rev}${s.ap?' · AP MODE':''}`}
+function showCfg(c){for(let i=0;i<2;i++){if(document.activeElement!==$('cs'+i))$('cs'+i).value=c.s[i];
+ if(document.activeElement!==$('co'+i))$('co'+i).value=c.o[i];if(document.activeElement!==$('cu'+i))$('cu'+i).value=c.u[i]}
+ if(document.activeElement!==$('fsS'))$('fsS').value=c.fs}
+async function saveCfg(){const o={t:'cfg',i:0,v:0,fs:Number($('fsS').value)};
+ for(let i=0;i<2;i++){o['s'+i]=Number($('cs'+i).value);o['o'+i]=Number($('co'+i).value);o['u'+i]=$('cu'+i).value.replace(/"/g,'')}
+ try{const j=await await_ack(pub(o));$('cfgMsg').textContent=j.ok?'Saved ✓':'Error';log('Settings saved')}
+ catch(e){$('cfgMsg').textContent='No reply';log('Settings NOT confirmed')}
+ setTimeout(()=>$('cfgMsg').textContent='',2500)}
+
+// data-age chip: shows staleness of last state message
+setInterval(()=>{if(!lastState)return;const a=(Date.now()-lastState)/1000;
+ chip('cAge',a<8?'ok':a<20?'wn':'',a<8?'DATA LIVE':`DATA ${Math.round(a)}s OLD`)},1000);
+
+// ---- events
+for(let i=0;i<4;i++)$('do'+i).onclick=()=>send('do',i,$('do'+i).classList.contains('on')?0:1);
+for(let i=0;i<2;i++){$('pd'+i).oninput=e=>$('pp'+i).textContent=e.target.value+'%';
+ $('pd'+i).onchange=e=>send('pwm',i,e.target.value);$('bf'+i).onclick=()=>send('freq',i,$('pf'+i).value)}
+$('bOff').onclick=async()=>{for(let i=0;i<4;i++)await send('do',i,0);for(let i=0;i<2;i++)await send('pwm',i,0)};
+$('bSave').onclick=saveCfg;$('bConn').onclick=connect;
+$('bDisc').onclick=()=>{if(cli){cli.end(true);cli=null}clearInterval(hbT);devOnline=false;chip('cDev','','DEVICE ?');enable()};
+
+enable();
+if(typeof mqtt==='undefined'){log('MQTT library failed to load — check internet connection');}
+else if(loadKeys()&&$('kPass').value)connect();else $('conn').open=true;
+}
+</script></body></html>
