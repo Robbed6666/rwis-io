@@ -30,7 +30,7 @@ input[type=number],input[type=text],input[type=password]{width:84px;background:#
 details summary{cursor:pointer;color:var(--mu);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
 </style></head><body>
 <header><h1>RWIS Remote IO</h1>
- <div class="chips"><span class="chip" id="cBroker">BROKER OFF</span><span class="chip" id="cDev">DEVICE ?</span><span class="chip" id="cAge">NO DATA</span></div></header>
+ <div class="chips"><span class="chip" id="cBroker" title="Tap to reconnect" style="cursor:pointer">BROKER OFF</span><span class="chip" id="cDev">DEVICE ?</span><span class="chip" id="cAge">NO DATA</span></div></header>
 <main>
 <div class="pn" style="grid-column:1/-1"><details id="conn"><summary>Connection</summary>
  <div class="row"><label>Host</label><input type="text" class="wide" id="kHost" placeholder="xxxxxxxx.ala.eu-central-1.emqxsl.com"></div>
@@ -87,15 +87,15 @@ function connect(){
  if(!host){$('conn').open=true;return}
  saveKeys();base=`rwis/${$('kDev').value.trim()}/`;
  chip('cBroker','wn','CONNECTING');
- cli=mqtt.connect(`wss://${host}:${port}${path}`,{username:$('kUser').value,password:$('kPass').value,
+ const c=cli=mqtt.connect(`wss://${host}:${port}${path}`,{username:$('kUser').value,password:$('kPass').value,
   clientId:'rwis-remote-'+CID,clean:true,reconnectPeriod:2000,connectTimeout:8000,keepalive:15});
- cli.on('connect',()=>{chip('cBroker','ok','BROKER OK');log('Broker connected');$('conn').open=false;
+ cli.on('connect',()=>{if(c!==cli)return;chip('cBroker','ok','BROKER OK');log('Broker connected');$('conn').open=false;
   cli.subscribe([base+'state',base+'ack',base+'status',base+'cfg'],{qos:1});enable();
   clearInterval(hbT);hbT=setInterval(()=>{if(devOnline)pub({t:'hb',i:0,v:0})},3000)});
- cli.on('reconnect',()=>chip('cBroker','wn','RECONNECTING'));
- cli.on('close',()=>{chip('cBroker','','BROKER OFF');enable()});
+ cli.on('reconnect',()=>c===cli&&chip('cBroker','wn','RECONNECTING'));
+ cli.on('close',()=>{if(c!==cli)return;chip('cBroker','','BROKER OFF');enable()});
  cli.on('error',e=>{log('Broker error: '+e.message);if(/auth|Not authorized|Bad user/i.test(e.message))cli.end(true)});
- cli.on('message',(topic,buf)=>{const m=buf.toString(),leaf=topic.slice(base.length);
+ cli.on('message',(topic,buf)=>{if(c!==cli)return;const m=buf.toString(),leaf=topic.slice(base.length);
   if(leaf=='status'){devOnline=m=='online';chip('cDev',devOnline?'ok':'',devOnline?'DEVICE ONLINE':'DEVICE OFFLINE');log('Device '+m);enable();return}
   let j;try{j=JSON.parse(m)}catch(e){return}
   if(leaf=='state'){lastState=Date.now();apply(j)}
@@ -133,7 +133,7 @@ async function saveCfg(){const o={t:'cfg',i:0,v:0,fs:Number($('fsS').value)};
  setTimeout(()=>$('cfgMsg').textContent='',2500)}
 
 // ---- mobile resilience: phones freeze sockets in background / on cell handover
-function kick(why){if(!cli)return;log('Reconnecting ('+why+')');lastState=0;cli.reconnect()}
+function kick(why){if(!cli)return;log('Reconnecting ('+why+')');lastState=0;devOnline=false;connect()}   // fresh client = same as page refresh
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'||!cli)return;
  if(!cli.connected||Date.now()-lastState>8000)kick('resumed')});
 window.addEventListener('online',()=>kick('network back'));
@@ -149,7 +149,7 @@ for(let i=0;i<4;i++)$('do'+i).onclick=()=>send('do',i,$('do'+i).classList.contai
 for(let i=0;i<2;i++){$('pd'+i).oninput=e=>$('pp'+i).textContent=e.target.value+'%';
  $('pd'+i).onchange=e=>send('pwm',i,e.target.value);$('bf'+i).onclick=()=>send('freq',i,$('pf'+i).value)}
 $('bOff').onclick=async()=>{for(let i=0;i<4;i++)await send('do',i,0);for(let i=0;i<2;i++)await send('pwm',i,0)};
-$('bSave').onclick=saveCfg;$('bConn').onclick=connect;
+$('bSave').onclick=saveCfg;$('cBroker').onclick=()=>{if(cli)kick('manual');else connect()};$('bConn').onclick=connect;
 $('bDisc').onclick=()=>{if(cli){cli.end(true);cli=null}clearInterval(hbT);devOnline=false;chip('cDev','','DEVICE ?');enable()};
 
 enable();
