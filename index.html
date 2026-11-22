@@ -27,12 +27,19 @@ input[type=number],input[type=text],input[type=password]{width:84px;background:#
 .adc{display:grid;grid-template-columns:1fr 1fr;gap:8px}.adc div{background:#2a3039;border-radius:6px;padding:8px}
 #log{font:12px ui-monospace,monospace;height:150px;overflow:auto;background:#0e1014;border-radius:5px;padding:6px;white-space:pre}
 .btn2{width:auto;padding:7px 14px;font-size:13px}#fs{color:var(--er);font-weight:600}
+#ban{display:none;margin:10px 10px 0;padding:12px 14px;border-radius:8px;font-weight:600;line-height:1.35}
+#ban.red{display:block;background:#4a1517;border:2px solid var(--er);color:#ffd7d8}
+#ban.amb{display:block;background:#3d2c0a;border:2px solid var(--pd);color:#ffe7b8}
+#ban .sm{display:block;font-weight:400;font-size:13px;opacity:.9;margin-top:3px}
+#ban button{float:right;width:auto;padding:4px 10px;margin-left:10px;font-size:12px}
+main.stale .pn:not(.keep){opacity:.4;filter:grayscale(1)}
 details summary{cursor:pointer;color:var(--mu);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
 </style></head><body>
 <header><h1>RWIS Remote IO</h1>
  <div class="chips"><span class="chip" id="cBroker" title="Tap to reconnect" style="cursor:pointer">BROKER OFF</span><span class="chip" id="cDev">DEVICE ?</span><span class="chip" id="cAge">NO DATA</span></div></header>
+<div id="ban"></div>
 <main>
-<div class="pn" style="grid-column:1/-1"><details id="conn"><summary>Connection</summary>
+<div class="pn keep" style="grid-column:1/-1"><details id="conn"><summary>Connection</summary>
  <div class="row"><label>Host</label><input type="text" class="wide" id="kHost" placeholder="xxxxxxxx.ala.eu-central-1.emqxsl.com"></div>
  <div class="row"><label>WSS port</label><input type="number" id="kPort" value="8084"><label>Path</label><input type="text" id="kPath" value="/mqtt"></div>
  <div class="row"><label>User</label><input type="text" class="wide" id="kUser"></div>
@@ -49,7 +56,7 @@ details summary{cursor:pointer;color:var(--mu);font-size:13px;text-transform:upp
 <div class="pn"><h2>Settings</h2><div id="cfg"></div>
  <div class="row"><label>Failsafe</label><input type="number" id="fsS" min="0" max="3600"> s <span class="sub">(0 = off)</span></div>
  <div class="row"><button class="btn2 ctl" id="bSave">Save settings</button><span class="sub" id="cfgMsg"></span></div></div>
-<div class="pn"><h2>Command log</h2><div id="log"></div><div class="sub" id="info"></div></div>
+<div class="pn keep"><h2>Command log</h2><div id="log"></div><div class="sub" id="info"></div></div>
 </main>
 <script>
 {
@@ -57,6 +64,7 @@ const $=id=>document.getElementById(id);
 const CID=Math.random().toString(36).slice(2,10);           // identifies this client's ACKs
 const TIMEOUT=3000,TRIES=3;
 let cli=null,base='',seq=0,busy={},waiters={},devOnline=false,lastState=0,hbT=null;
+let offSince=0,lastTs=0,restartMsg='',st=null;
 
 for(let i=0;i<4;i++){$('di').innerHTML+=`<div class="lamp" id="di${i}">DI${i+1}</div>`;
  $('do').innerHTML+=`<button class="ctl" id="do${i}" data-i="${i}">DO${i+1}</button>`}
@@ -96,9 +104,9 @@ function connect(){
  cli.on('close',()=>{if(c!==cli)return;chip('cBroker','','BROKER OFF');enable()});
  cli.on('error',e=>{log('Broker error: '+e.message);if(/auth|Not authorized|Bad user/i.test(e.message))cli.end(true)});
  cli.on('message',(topic,buf)=>{if(c!==cli)return;const m=buf.toString(),leaf=topic.slice(base.length);
-  if(leaf=='status'){devOnline=m=='online';chip('cDev',devOnline?'ok':'',devOnline?'DEVICE ONLINE':'DEVICE OFFLINE');log('Device '+m);enable();return}
+  if(leaf=='status'){const was=devOnline;devOnline=m=='online';if(!devOnline&&was!==false)offSince=Date.now();if(!devOnline&&!offSince)offSince=-1;if(devOnline)offSince=0;chip('cDev',devOnline?'ok':'',devOnline?'DEVICE ONLINE':'DEVICE OFFLINE');log('Device '+m);enable();return}
   let j;try{j=JSON.parse(m)}catch(e){return}
-  if(leaf=='state'){lastState=Date.now();apply(j)}
+  if(leaf=='state'){if(devOnline)lastState=Date.now();if(j.ts)lastTs=j.ts*1000;checkBoot(j);apply(j)}
   else if(leaf=='cfg')showCfg(j)
   else if(leaf=='ack'&&j.cid==CID&&waiters[j.seq]){waiters[j.seq](j);delete waiters[j.seq]}});
 }
@@ -139,6 +147,23 @@ document.addEventListener('visibilitychange',()=>{if(document.visibilityState!==
 window.addEventListener('online',()=>kick('network back'));
 // ESP32 publishes state at least every 5 s; silence for 12 s while 'connected' = dead socket
 setInterval(()=>{if(cli&&cli.connected&&devOnline&&lastState&&Date.now()-lastState>12000)kick('stale link')},2000);
+
+// ---- restart / power-loss detection (boot counter survives page closing via localStorage)
+function fmt(ms){const d=new Date(ms);return d.toLocaleTimeString('en-GB')+(new Date().toDateString()===d.toDateString()?'':' '+d.toLocaleDateString('en-GB'))}
+function checkBoot(j){if(!j.boot)return;let prev=0;try{prev=+localStorage.getItem('rwisio_boot_'+base)||0;localStorage.setItem('rwisio_boot_'+base,j.boot)}catch(e){}
+ if(prev&&j.boot!==prev){const at=Date.now()-j.up*1000;
+  restartMsg=`Device restarted at ${fmt(at)} — reason: ${j.rst}.`+(j.restored?' Outputs restored to their previous state.':' Outputs are OFF.');
+  log('RESTART: '+j.rst+(j.restored?' (outputs restored)':''))}}
+function banner(){const b=$('ban'),main=document.querySelector('main');let cls='',html='';
+ const broker=cli&&cli.connected,age=lastState?(Date.now()-lastState)/1000:1e9;
+ if(cli&&!broker){cls='red';html='NO CONNECTION TO SERVER<span class="sm">This phone/PC cannot reach the broker — check its internet connection. Tap BROKER to retry.</span>'}
+ else if(broker&&!devOnline&&offSince){cls='red';const since=offSince>0?fmt(offSince):(lastTs?'last data '+fmt(lastTs):'unknown');
+  html=`DEVICE OFFLINE — since ${since}<span class="sm">Power loss at site, or site WiFi/internet down. Values shown are the last known and may be out of date.</span>`}
+ else if(broker&&devOnline&&age>12){cls='amb';html=`NO DATA FOR ${age>1e8?'—':Math.round(age)+' s'}<span class="sm">Link may be stalled — reconnecting automatically.</span>`}
+ else if(restartMsg){cls='amb';html=`<button id="banX">Dismiss</button>${restartMsg}<span class="sm">Usually a power cut or supply dip. Check outputs are as expected.</span>`}
+ b.className=cls;b.innerHTML=html;main.classList.toggle('stale',cls==='red');
+ const x=$('banX');if(x)x.onclick=()=>{restartMsg='';banner()}}
+setInterval(banner,1000);
 
 // data-age chip: shows staleness of last state message
 setInterval(()=>{if(!lastState)return;const a=(Date.now()-lastState)/1000;
