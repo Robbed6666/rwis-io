@@ -1,94 +1,290 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RWIS Remote IO — Remote</title>
-<!-- RWIS Remote IO remote client: MQTT over secure WebSocket (EMQX Serverless: port 8084, path /mqtt; HiveMQ Cloud: port 8884, path /mqtt).
-     Host this file anywhere (GitHub Pages, company site) or open it directly on a PC.
+<title>RWIS Remote IO</title>
+<link rel="icon" href="data:,">
+<!-- RWIS Remote IO — one page for both access paths.
+     Served by the ESP32 (http://rwis-io.local)  -> talks HTTP to the device directly.
+     Hosted on GitHub Pages / opened as a file   -> talks MQTT over secure WebSocket via the cloud broker.
      Robert Edwards FRSA MIEEE — Rapid Welding & Industrial Supplies Ltd -->
-<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <style>
-:root{--bg:#14171c;--pn:#1e232b;--ln:#2e3540;--tx:#e6e9ee;--mu:#8a93a0;--ok:#2fbf71;--pd:#f0a020;--er:#e5484d;--on:#3b82f6}
-*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+:root{--bg:#14171c;--pn:#1e232b;--ln:#2e3540;--tx:#e6e9ee;--mu:#8a93a0;--ok:#2fbf71;--pd:#f0a020;--er:#e5484d;--on:#3b82f6;--a1:#4ea1ff;--a2:#f39c3d}
+*{box-sizing:border-box;min-width:0}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
 header{display:flex;flex-wrap:wrap;gap:6px;justify-content:space-between;align-items:center;padding:10px 14px;background:#0e1014;border-bottom:1px solid var(--ln)}
 h1{font-size:16px;margin:0}.chips{display:flex;gap:6px;flex-wrap:wrap}
-.chip{font-size:12px;padding:3px 9px;border-radius:10px;background:var(--er)}.chip.ok{background:var(--ok);color:#06210f}.chip.wn{background:var(--pd);color:#2a1a00}
+.chip{font-size:12px;padding:3px 9px;border-radius:10px;background:var(--er);cursor:default}.chip.ok{background:var(--ok);color:#06210f}.chip.wn{background:var(--pd);color:#2a1a00}
 main{padding:10px;display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
-.pn{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:10px}
-.pn h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu);margin:0 0 8px}
+.pn{background:var(--pn);border:1px solid var(--ln);border-radius:8px;padding:10px}.wide{grid-column:1/-1}
+.pn h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu);margin:0 0 8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.lamp{text-align:center;padding:10px 0;border-radius:6px;background:#2a3039;font-weight:600}.lamp.on{background:var(--ok);color:#06210f}
-button{font:inherit;color:var(--tx);background:#2a3039;border:2px solid var(--ln);border-radius:6px;padding:12px 0;width:100%;font-weight:600;cursor:pointer}
+.lamp{text-align:center;padding:8px 2px;border-radius:6px;background:#2a3039;font-weight:600;line-height:1.2}.lamp.on{background:var(--ok);color:#06210f}
+.nm{display:block;font-size:11px;font-weight:400;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button{font:inherit;color:var(--tx);background:#2a3039;border:2px solid var(--ln);border-radius:6px;padding:10px 2px;width:100%;font-weight:600;cursor:pointer;line-height:1.2}
 button:disabled{opacity:.4;cursor:not-allowed}button.on{background:var(--on)}
 .pend{border-color:var(--pd)!important}.ack{border-color:var(--ok)!important}.err{border-color:var(--er)!important}
-.row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}.row label{width:58px;color:var(--mu)}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}.row label{width:70px;color:var(--mu)}
 input[type=range]{flex:1;accent-color:var(--on)}
 input[type=number],input[type=text],input[type=password]{width:84px;background:#11141a;color:var(--tx);border:2px solid var(--ln);border-radius:5px;padding:6px;font-size:15px}
-.wide{flex:1;min-width:160px}.val{font:600 26px ui-monospace,monospace}.sub{color:var(--mu);font-size:12px}
+.wi{flex:1;min-width:150px}.val{font:600 26px ui-monospace,monospace}.sub{color:var(--mu);font-size:12px}
 .adc{display:grid;grid-template-columns:1fr 1fr;gap:8px}.adc div{background:#2a3039;border-radius:6px;padding:8px}
 #log{font:12px ui-monospace,monospace;height:150px;overflow:auto;background:#0e1014;border-radius:5px;padding:6px;white-space:pre}
 .btn2{width:auto;padding:7px 14px;font-size:13px}#fs{color:var(--er);font-weight:600}
+details summary{cursor:pointer;color:var(--mu);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
 #ban{display:none;margin:10px 10px 0;padding:12px 14px;border-radius:8px;font-weight:600;line-height:1.35}
 #ban.red{display:block;background:#4a1517;border:2px solid var(--er);color:#ffd7d8}
 #ban.amb{display:block;background:#3d2c0a;border:2px solid var(--pd);color:#ffe7b8}
 #ban .sm{display:block;font-weight:400;font-size:13px;opacity:.9;margin-top:3px}
 #ban button{float:right;width:auto;padding:4px 10px;margin-left:10px;font-size:12px}
 main.stale .pn:not(.keep){opacity:.4;filter:grayscale(1)}
-details summary{cursor:pointer;color:var(--mu);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+.seg{display:inline-flex;border:2px solid var(--ln);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;width:auto;padding:5px 12px;font-size:12px;background:#11141a}.seg button.sel{background:var(--on)}
+.fig{position:relative;height:360px}.fig canvas{position:absolute;inset:0;width:100%;height:100%}
+.leg{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mu)}.leg i{display:inline-block;width:12px;height:3px;margin-right:5px;vertical-align:middle}
+#evList{max-height:340px;overflow:auto;font-size:13px}
+.ev{display:grid;grid-template-columns:120px 1fr;gap:8px;padding:5px 8px;border-left:4px solid #555;margin-bottom:2px;background:#191d24}
+.ev .et{color:var(--mu);font:12px ui-monospace,monospace}
+.ev.t1{border-color:var(--ok)}.ev.t2{border-color:var(--on)}.ev.t3{border-color:var(--pd)}.ev.t4{border-color:var(--er);background:#2c1416}
+.cb{display:inline-flex;align-items:center;gap:5px;margin:3px 12px 3px 0;font-size:13px}
+code{background:#11141a;padding:2px 6px;border-radius:4px;overflow-wrap:anywhere}
+a{color:var(--a1)}
+#hMsg{text-transform:none;letter-spacing:0}
+.nmg{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:6px 8px;align-items:center;margin:4px 0 8px}.nmg span{color:var(--mu);font-size:13px}.nmg input{width:100%}
+.ai input[type=number]{width:70px}.ai label{width:34px}
 </style></head><body>
 <header><h1>RWIS Remote IO</h1>
- <div class="chips"><span class="chip" id="cBroker" title="Tap to reconnect" style="cursor:pointer">BROKER OFF</span><span class="chip" id="cDev">DEVICE ?</span><span class="chip" id="cAge">NO DATA</span></div></header>
+ <div class="chips">
+  <span class="chip" id="cLink" hidden>NO LINK</span>
+  <span class="chip" id="cBroker" title="Tap to reconnect" style="cursor:pointer">BROKER OFF</span>
+  <span class="chip" id="cDev">DEVICE ?</span><span class="chip" id="cAge">NO DATA</span>
+ </div></header>
 <div id="ban"></div>
 <main>
-<div class="pn keep" style="grid-column:1/-1"><details id="conn"><summary>Connection</summary>
- <div class="row"><label>Host</label><input type="text" class="wide" id="kHost" placeholder="xxxxxxxx.ala.eu-central-1.emqxsl.com"></div>
+<div class="pn keep wide" id="pConn"><details id="conn"><summary>Connection</summary>
+ <div class="row"><label>Host</label><input type="text" class="wi" id="kHost" placeholder="xxxxxxxx.ala.eu-central-1.emqxsl.com"></div>
  <div class="row"><label>WSS port</label><input type="number" id="kPort" value="8084"><label>Path</label><input type="text" id="kPath" value="/mqtt"></div>
- <div class="row"><label>User</label><input type="text" class="wide" id="kUser"></div>
- <div class="row"><label>Password</label><input type="password" class="wide" id="kPass"></div>
- <div class="row"><label>Device ID</label><input type="text" class="wide" id="kDev" value="rwis-io-01"></div>
+ <div class="row"><label>User</label><input type="text" class="wi" id="kUser"></div>
+ <div class="row"><label>Password</label><input type="password" class="wi" id="kPass"></div>
+ <div class="row"><label>Device ID</label><input type="text" class="wi" id="kDev" value="rwis-io-01"></div>
  <div class="row"><label></label><input type="checkbox" id="kRem"><span class="sub">Remember password on this device</span></div>
  <div class="row"><label></label><button class="btn2" id="bConn">Connect</button><button class="btn2" id="bDisc">Disconnect</button></div>
 </details></div>
+
 <div class="pn"><h2>Digital inputs</h2><div class="g4" id="di"></div></div>
 <div class="pn"><h2>Digital outputs <span id="fs"></span></h2><div class="g4" id="do"></div>
  <div class="row" style="margin-top:10px"><button class="btn2 ctl" id="bOff">ALL OFF</button></div></div>
 <div class="pn"><h2>Analogue inputs</h2><div class="adc" id="adc"></div></div>
 <div class="pn"><h2>PWM outputs</h2><div id="pwm"></div></div>
+
+<div class="pn wide" id="pHist">
+ <h2>History <span class="seg" id="tabs"><button data-t="tr" class="sel">Trend</button><button data-t="ev">Events</button></span>
+  <span class="seg" id="rng"><button data-r="1">1 h</button><button data-r="6">6 h</button><button data-r="24" class="sel">24 h</button></span>
+  <button class="btn2" id="hRef">Refresh</button><button class="btn2" id="hCsv">Download CSV</button><span class="sub" id="hMsg"></span></h2>
+ <div id="vTr"><div class="leg" id="leg"></div><div class="fig"><canvas id="chart"></canvas></div><div class="sub" id="hover">Tap or hover the chart for values. Gaps show when the device was off or not recording.</div></div>
+ <div id="vEv" hidden><div id="evList"><div class="sub">No events loaded.</div></div></div>
+</div>
+
 <div class="pn"><h2>Settings</h2><div id="cfg"></div>
  <div class="row"><label>Failsafe</label><input type="number" id="fsS" min="0" max="3600"> s <span class="sub">(0 = off)</span></div>
+ <div class="sub" style="margin:8px 0 2px">Channel names (used on this page, in alerts and in the log)</div>
+ <div class="nmg" id="names"></div>
  <div class="row"><button class="btn2 ctl" id="bSave">Save settings</button><span class="sub" id="cfgMsg"></span></div></div>
+
+<div class="pn"><h2>Alerts</h2>
+ <div class="row"><label>ntfy topic</label><input type="text" class="wi" id="aNt" maxlength="47" placeholder="off"><button class="btn2" id="aGen">Generate</button></div>
+ <div class="sub" id="aHint">Install the free <b>ntfy</b> app (Android / iPhone), tap +, and subscribe to the topic above. Leave blank to turn push alerts off.</div>
+ <div class="row" style="margin-top:8px"><label>Send for</label><div id="aMask"></div></div>
+ <div class="row"><label>Offline URL</label><input type="text" class="wi" id="aHc" maxlength="111" placeholder="https://hc-ping.com/…"></div>
+ <div class="sub">Healthchecks.io ping URL. The device pings it every minute; if pings stop, Healthchecks sends the DEVICE OFFLINE alert.</div>
+ <div class="row"><button class="btn2 ctl" id="aSave">Save alerts</button><button class="btn2 ctl" id="aTest">Send test alert</button><span class="sub" id="aMsg"></span></div>
+</div>
+
 <div class="pn keep"><h2>Command log</h2><div id="log"></div><div class="sub" id="info"></div></div>
 </main>
 <script>
 {
 const $=id=>document.getElementById(id);
-const CID=Math.random().toString(36).slice(2,10);           // identifies this client's ACKs
-const TIMEOUT=3000,TRIES=3;
-let cli=null,base='',seq=0,busy={},waiters={},devOnline=false,lastState=0,hbT=null;
-let offSince=0,lastTs=0,restartMsg='',st=null;
+const LAN=location.protocol==='http:'&&!/github\.io$/i.test(location.hostname);   // served by the ESP32 itself
+const CID=Math.random().toString(36).slice(2,10);
+const TRIES=3,TMO=LAN?1500:3000;
+let cli=null,base='',seq=0,busy={},waiters={},devOnline=LAN,lastState=0,hbT=null;
+let offSince=0,lastTs=0,restartMsg='',lostAt=0,fail=0,cfg=null,lastBoot=0;
+let trend=[],events=new Map(),evMax=0,evFetching=false,range=24,tab='tr',histBuf=null,trPeriod=60;
 
-for(let i=0;i<4;i++){$('di').innerHTML+=`<div class="lamp" id="di${i}">DI${i+1}</div>`;
- $('do').innerHTML+=`<button class="ctl" id="do${i}" data-i="${i}">DO${i+1}</button>`}
+// ---------- build controls
+for(let i=0;i<4;i++){$('di').innerHTML+=`<div class="lamp" id="di${i}">DI${i+1}<span class="nm" id="dn${i}"></span></div>`;
+ $('do').innerHTML+=`<button class="ctl" id="do${i}">DO${i+1}<span class="nm" id="onm${i}"></span></button>`;
+ $('names').innerHTML+=`<span>DI${i+1}</span><input type="text" id="ndi${i}" maxlength="15" placeholder="e.g. Gate"><span>DO${i+1}</span><input type="text" id="ndo${i}" maxlength="15" placeholder="e.g. Pump">`;
+ $('aMask').innerHTML+=`<span class="cb"><input type="checkbox" id="am${i}"><span id="aml${i}">DI${i+1}</span></span>`}
+$('aMask').innerHTML+=`<span class="cb"><input type="checkbox" id="am4">Restart</span><span class="cb"><input type="checkbox" id="am5">Failsafe</span><span class="cb"><input type="checkbox" id="am6">Output changes</span>`;
 for(let i=0;i<2;i++){
  $('adc').innerHTML+=`<div><div class="sub">AI${i+1}</div><div class="val" id="av${i}">--</div><div class="sub" id="ar${i}"></div></div>`;
  $('pwm').innerHTML+=`<div class="row"><label>PWM${i+1}</label><input type="range" class="ctl" id="pd${i}" min="0" max="100" step="0.5"><span id="pp${i}" style="width:52px">0%</span></div>
   <div class="row"><label>Freq</label><input type="number" id="pf${i}" min="1" max="40000"> Hz <button class="btn2 ctl" id="bf${i}">Set</button></div>`;
- $('cfg').innerHTML+=`<div class="row"><label>AI${i+1}</label>x<input type="number" step="any" id="cs${i}">+<input type="number" step="any" id="co${i}">
-  <input type="text" id="cu${i}" maxlength="7" style="width:54px"></div>`}
+ $('cfg').innerHTML+=`<div class="row ai"><label>AI${i+1}</label>x<input type="number" step="any" id="cs${i}">+<input type="number" step="any" id="co${i}"><input type="text" id="cu${i}" maxlength="7" style="width:56px" title="unit"></div>`}
 
 function log(m){const t=new Date().toTimeString().slice(0,8),l=$('log');l.textContent=t+' '+m+'\n'+l.textContent.slice(0,4000)}
 function chip(id,cls,txt){$(id).className='chip '+cls;$(id).textContent=txt}
-function mark(k,c){const e=$(k);if(!e)return;e.classList.remove('pend','ack','err');e.classList.add(c);
- if(c=='ack')setTimeout(()=>e.classList.remove('ack'),1200)}
-function enable(){const on=!!(cli&&cli.connected&&devOnline);document.querySelectorAll('.ctl').forEach(e=>e.disabled=!on)}
+function mark(k,c){const e=$(k);if(!e)return;e.classList.remove('pend','ack','err');e.classList.add(c);if(c=='ack')setTimeout(()=>e.classList.remove('ack'),1200)}
+function enable(){const on=LAN?!lostAt:!!(cli&&cli.connected&&devOnline);document.querySelectorAll('.ctl').forEach(e=>e.disabled=!on)}
+const clean=s=>String(s||'').replace(/["\\]/g,'').trim();
+const fmt=ms=>{const d=new Date(ms);return d.toLocaleTimeString('en-GB')+(new Date().toDateString()===d.toDateString()?'':' '+d.toLocaleDateString('en-GB'))};
+const fmtShort=ts=>{const d=new Date(ts*1000);return d.toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('en-GB')};
 
-// ---- settings persistence
+// ---------- transport: one cmd() for both paths
+async function req(url,ms){const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
+ try{const r=await fetch(url,{signal:c.signal,cache:'no-store'});return await r.json()}finally{clearTimeout(t)}}
+function awaitAck(s,ms){return new Promise((res,rej)=>{waiters[s]=res;setTimeout(()=>{if(waiters[s]){delete waiters[s];rej('timeout')}},ms)})}
+async function cmd(o,ms=TMO){o.seq=++seq;o.cid=CID;
+ if(LAN)return await req('/api/cmd?j='+encodeURIComponent(JSON.stringify(o)),ms);
+ if(!(cli&&cli.connected))throw 'offline';
+ const p=awaitAck(o.seq,ms);cli.publish(base+'cmd',JSON.stringify(o),{qos:1});return await p}
+
+async function send(t,i,v,tries=0){
+ const k=(t=='do'?'do':t=='pwm'?'pd':'pf')+i,t0=performance.now();busy[k]=1;mark(k,'pend');
+ try{const j=await cmd({t,i,v:Number(v)});const ms=Math.round(performance.now()-t0);
+  if(j.ok){mark(k,'ack');log(`ACK #${j.seq} ${t}${i+1} req=${j.req} act=${j.act} ${ms}ms`)}
+  else{mark(k,'err');log(`NAK #${j.seq} ${t}${i+1} ${j.err} req=${j.req} act=${j.act}`)}}
+ catch(e){if(tries<TRIES-1){log(`retry ${t}${i+1} (${tries+1})`);delete busy[k];return send(t,i,v,tries+1)}
+  mark(k,'err');log(`NO ACK ${t}${i+1} — command not confirmed`)}
+ finally{delete busy[k]}}
+
+let histChain=Promise.resolve();
+function getHist(k,since){const p=histChain.then(()=>getHist1(k,since));histChain=p.catch(()=>{});return p}
+async function getHist1(k,since){
+ if(LAN){const j=await req(`/api/hist?k=${k}&since=${since}`,10000);if(j.p)trPeriod=j.p;return j.d||[]}
+ return new Promise((res,rej)=>{histBuf={k,d:[],res};const to=setTimeout(()=>{if(histBuf&&histBuf.res===res){histBuf=null;res(null)}},25000);
+  histBuf.done=()=>clearTimeout(to);
+  cmd({t:'hist',i:k=='tr'?1:0,v:since},TMO).catch(()=>{clearTimeout(to);histBuf=null;res(null)})})}
+
+// ---------- state from either path
+function onState(s){
+ lastState=Date.now();if(s.ts)lastTs=s.ts*1000;
+ checkBoot(s);
+ s.di.forEach((v,i)=>$('di'+i).classList.toggle('on',!!v));
+ s.do.forEach((v,i)=>{const b=$('do'+i);if(!busy['do'+i]){b.classList.toggle('on',!!v);b.firstChild.textContent=`DO${i+1} ${v?'ON':'OFF'}`}});
+ s.pwm.forEach((p,i)=>{if(!busy['pd'+i]&&document.activeElement!==$('pd'+i)){$('pd'+i).value=p.pct;$('pp'+i).textContent=p.pct+'%'}
+  if(!busy['pf'+i]&&document.activeElement!==$('pf'+i))$('pf'+i).value=p.f});
+ s.adc.forEach((a,i)=>{$('av'+i).textContent=a.val.toFixed(3)+' '+a.u;$('ar'+i).textContent=`${a.mv} mV  raw ${a.raw}`});
+ $('fs').textContent=s.fsTrip?'FAILSAFE TRIPPED':'';
+ $('info').textContent=`RSSI ${s.rssi} dBm · up ${s.up}s · boot #${s.boot} · rev ${s.rev}${s.ap?' · AP MODE':''}`;
+ if(s.evn!==undefined){if(s.evn<evMax){events.clear();evMax=0;renderEvents()} if(s.evn>evMax)fetchEvents()}
+}
+function checkBoot(j){if(!j.boot)return;let prev=lastBoot;
+ if(!LAN){try{prev=+localStorage.getItem('rwisio_boot_'+base)||0;localStorage.setItem('rwisio_boot_'+base,j.boot)}catch(e){}}
+ if(prev&&j.boot!==prev){restartMsg=`Device restarted at ${fmt(Date.now()-j.up*1000)} — reason: ${j.rst}.`+(j.restored?' Outputs restored to their previous state.':' Outputs are OFF.');log('RESTART: '+j.rst)}
+ lastBoot=j.boot}
+function showCfg(c){cfg=c;const fe=document.activeElement,set=(id,v)=>{if(fe!==$(id))$(id).value=v};
+ for(let i=0;i<2;i++){set('cs'+i,c.s[i]);set('co'+i,c.o[i]);set('cu'+i,c.u[i])}
+ set('fsS',c.fs);set('aNt',c.nt||'');set('aHc',c.hc||'');
+ for(let i=0;i<4;i++){set('ndi'+i,c.dn[i]);set('ndo'+i,c.on[i]);$('dn'+i).textContent=c.dn[i];$('onm'+i).textContent=c.on[i];
+  $('aml'+i).textContent=`DI${i+1}`+(c.dn[i]?' '+c.dn[i]:'')}
+ for(let b=0;b<7;b++)$('am'+b).checked=!!(c.am&(1<<b));
+ hint();legend();draw()}
+function hint(){const t=$('aNt').value.trim(),srv=(cfg&&cfg.ntfySrv)||'https://ntfy.sh';
+ $('aHint').innerHTML=t?`Install the free <b>ntfy</b> app (Android / iPhone), tap <b>+</b> and subscribe to <code>${t.replace(/[<>&]/g,'')}</code> (server ${srv.replace(/^https?:\/\//,'')}). Keep the topic secret — anyone who knows it can read the alerts.`
+  :'Push alerts are off. Tap <b>Generate</b> for a private topic, then save.'}
+
+// ---------- settings + alerts save (one cfg object)
+async function saveCfg(msgEl){const o={t:'cfg',i:0,v:0,fs:Number($('fsS').value),nt:clean($('aNt').value),hc:clean($('aHc').value)};
+ let am=0;for(let b=0;b<7;b++)if($('am'+b).checked)am|=1<<b;o.am=am;
+ for(let i=0;i<2;i++){o['s'+i]=Number($('cs'+i).value);o['o'+i]=Number($('co'+i).value);o['u'+i]=clean($('cu'+i).value)}
+ for(let i=0;i<4;i++){o['dn'+i]=clean($('ndi'+i).value);o['on'+i]=clean($('ndo'+i).value)}
+ try{const j=await cmd(o);$(msgEl).textContent=j.ok?'Saved ✓':'Error';log('Settings saved');if(LAN)loadCfgLan()}
+ catch(e){$(msgEl).textContent='No reply';log('Settings NOT confirmed')}
+ setTimeout(()=>$(msgEl).textContent='',3000)}
+async function testAlert(){$('aMsg').textContent='Sending…';
+ try{const j=await cmd({t:'test',i:0,v:0});$('aMsg').textContent=j.ok?'Queued — check the ntfy app':'Failed: '+j.err}
+ catch(e){$('aMsg').textContent='No reply'}setTimeout(()=>$('aMsg').textContent='',6000)}
+
+// ---------- history
+async function fetchEvents(){if(evFetching)return;evFetching=true;
+ try{const d=await getHist('ev',evMax);if(d)addEvents(d)}catch(e){}evFetching=false}
+function addEvents(list){list.forEach(e=>{events.set(e[0],e);if(e[0]>evMax)evMax=e[0];
+  if(e[3]&&/FAILSAFE|Restarted|lost/i.test(e[3])&&list.length<4)log('EVENT: '+e[3])});
+ const ids=[...events.keys()].sort((a,b)=>a-b);while(ids.length>300)events.delete(ids.shift());renderEvents()}
+function renderEvents(){const ev=[...events.values()].sort((a,b)=>b[0]-a[0]);
+ $('evList').innerHTML=ev.length?ev.map(e=>`<div class="ev t${e[2]}"><span class="et">${e[1]?fmtShort(e[1]):'#'+e[0]}</span><span>${String(e[3]).replace(/[<>&]/g,'')}</span></div>`).join('')
+  :'<div class="sub">No events yet.</div>'}
+async function fetchTrend(full){$('hMsg').textContent='Loading…';
+ const since=full||!trend.length?0:trend[trend.length-1][0];
+ try{const d=await getHist('tr',since);
+  if(d===null){$('hMsg').textContent='No reply';return}
+  trend=full?d:trend.concat(d);const cut=Date.now()/1000-86400*1.05;trend=trend.filter(p=>p[0]>cut).sort((a,b)=>a[0]-b[0]);
+  $('hMsg').textContent=`${trend.length} points`;draw()}
+ catch(e){$('hMsg').textContent='No reply'}}
+function legend(){const u=i=>(cfg&&cfg.u[i])||'';
+ $('leg').innerHTML=`<span><i style="background:var(--a1)"></i>AI1 ${u(0)} (left axis)</span><span><i style="background:var(--a2)"></i>AI2 ${u(1)} (right axis)</span><span><i style="background:var(--ok)"></i>DI on</span><span><i style="background:var(--on)"></i>DO on</span>`}
+let geo=null;
+function draw(){const cv=$('chart');if(!cv.clientWidth||tab!=='tr')return;
+ const W=cv.clientWidth,H=cv.clientHeight,dpr=window.devicePixelRatio||1;cv.width=W*dpr;cv.height=H*dpr;
+ const g=cv.getContext('2d');g.scale(dpr,dpr);g.clearRect(0,0,W,H);g.font='11px system-ui,sans-serif';
+ const narrow=W<520,L=narrow?36:48,R=narrow?36:48,T=8,SR=13,strips=8*SR+12,CH=H-T-strips-24,now=Date.now()/1000,t0=now-range*3600;
+ const pts=trend.filter(p=>p[0]>=t0);geo={L,R,W,t0,now,pts};
+ const X=t=>L+(t-t0)/(now-t0)*(W-L-R);
+ g.strokeStyle='#2e3540';g.lineWidth=1;g.strokeRect(L,T,W-L-R,CH);
+ // x ticks
+ g.fillStyle='#8a93a0';g.textAlign='center';const nT=narrow?3:6;
+ for(let k=0;k<=nT;k++){const t=t0+(now-t0)*k/nT,x=X(t);g.beginPath();g.moveTo(x,T);g.lineTo(x,T+CH+strips);g.strokeStyle='#232933';g.stroke();
+  g.fillText(new Date(t*1000).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}),x,H-6)}
+ if(!pts.length){g.textAlign='left';g.fillText('No trend data in this range yet — a point is recorded every minute.',L+10,T+24);return}
+ const gap=trPeriod*2.5;
+ [1,2].forEach((c,ci)=>{let mn=Math.min(...pts.map(p=>p[c])),mx=Math.max(...pts.map(p=>p[c]));
+  if(mx-mn<1e-6){mn-=0.5;mx+=0.5}const pad=(mx-mn)*0.08;mn-=pad;mx+=pad;
+  const Y=v=>T+CH-(v-mn)/(mx-mn)*CH;
+  g.fillStyle=ci?'#f39c3d':'#4ea1ff';g.textAlign=ci?'left':'right';
+  for(let k=0;k<=4;k++){const v=mn+(mx-mn)*k/4;g.fillText(+v.toPrecision(3),ci?W-R+4:L-4,Y(v)+4);
+   if(!ci){g.beginPath();g.moveTo(L,Y(v));g.lineTo(W-R,Y(v));g.strokeStyle='#232933';g.stroke()}}
+  g.beginPath();g.strokeStyle=ci?'#f39c3d':'#4ea1ff';g.lineWidth=1.8;
+  pts.forEach((p,n)=>{const x=X(p[0]),y=Y(p[c]);if(n&&p[0]-pts[n-1][0]<=gap)g.lineTo(x,y);else g.moveTo(x,y)});g.stroke();g.lineWidth=1});
+ // digital strips
+ const names=['DI1','DI2','DI3','DI4','DO1','DO2','DO3','DO4'];
+ g.font='10px system-ui,sans-serif';
+ for(let r=0;r<8;r++){const y=T+CH+12+r*SR+(r>3?4:0),col=r<4?'#2fbf71':'#3b82f6',idx=r<4?3:4,bit=1<<(r%4);
+  g.fillStyle='#8a93a0';g.textAlign='right';g.fillText(names[r],L-4,y+9);
+  g.fillStyle=col;
+  for(let n=0;n<pts.length;n++){if(!(pts[n][idx]&bit))continue;const x1=X(pts[n][0]),nx=pts[n+1];
+   const x2=nx&&nx[0]-pts[n][0]<=gap?X(nx[0]):x1+Math.max(1,(W-L-R)*trPeriod/(now-t0));g.fillRect(x1,y,Math.max(1,x2-x1),SR-4)}}
+}
+function hover(ev){if(!geo||!geo.pts.length)return;const r=$('chart').getBoundingClientRect(),x=ev.clientX-r.left;
+ const t=geo.t0+(x-geo.L)/(geo.W-geo.L-geo.R)*(geo.now-geo.t0);let best=null,bd=1e9;
+ for(const p of geo.pts){const d=Math.abs(p[0]-t);if(d<bd){bd=d;best=p}}if(!best||bd>trPeriod*3)return;
+ const u=i=>(cfg&&cfg.u[i])||'',bits=(v)=>[0,1,2,3].map(b=>v&(1<<b)?'1':'0').join('');
+ $('hover').textContent=`${fmtShort(best[0])}  ·  AI1 ${(+best[1]).toFixed(3)} ${u(0)}  ·  AI2 ${(+best[2]).toFixed(3)} ${u(1)}  ·  DI ${bits(best[3])}  ·  DO ${bits(best[4])}`}
+function csv(){let rows,name;const d=new Date().toISOString().slice(0,10).replace(/-/g,'');
+ if(tab==='tr'){const u=i=>(cfg&&cfg.u[i])||'';
+  rows=[['time',`AI1 (${u(0)})`,`AI2 (${u(1)})`,'DI1','DI2','DI3','DI4','DO1','DO2','DO3','DO4']].concat(trend.map(p=>[new Date(p[0]*1000).toLocaleString('en-GB'),p[1],p[2],...[0,1,2,3].map(b=>p[3]>>b&1),...[0,1,2,3].map(b=>p[4]>>b&1)]));name=`rwis-io-trend-${d}.csv`}
+ else{rows=[['id','time','type','event']].concat([...events.values()].sort((a,b)=>a[0]-b[0]).map(e=>[e[0],e[1]?new Date(e[1]*1000).toLocaleString('en-GB'):'',['info','input','output','warning','alarm'][e[2]]||e[2],e[3]]));name=`rwis-io-events-${d}.csv`}
+ const txt=rows.map(r=>r.map(v=>/[",\n]/.test(String(v))?'"'+String(v).replace(/"/g,'""')+'"':v).join(',')).join('\r\n');
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/csv'}));a.download=name;document.body.appendChild(a);a.click();
+ setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}
+function loadHistory(){fetchEvents();fetchTrend(!trend.length)}
+
+// ---------- banner
+function banner(){const b=$('ban'),main=document.querySelector('main');let cls='',html='';
+ if(LAN){if(lostAt){cls='red';html=`DEVICE NOT RESPONDING — since ${fmt(lostAt)}<span class="sm">Power loss, or the device has left the WiFi. Values shown are the last known.</span>`}}
+ else{const broker=cli&&cli.connected,age=lastState?(Date.now()-lastState)/1000:1e9;
+  if(cli&&!broker){cls='red';html='NO CONNECTION TO SERVER<span class="sm">This phone/PC cannot reach the broker — check its internet connection. Tap BROKER to retry.</span>'}
+  else if(broker&&!devOnline&&offSince){cls='red';const since=offSince>0?fmt(offSince):(lastTs?'last data '+fmt(lastTs):'unknown');
+   html=`DEVICE OFFLINE — since ${since}<span class="sm">Power loss at site, or site WiFi/internet down. Values shown are the last known and may be out of date.</span>`}
+  else if(broker&&devOnline&&age>12){cls='amb';html=`NO DATA FOR ${age>1e8?'—':Math.round(age)+' s'}<span class="sm">Link may be stalled — reconnecting automatically.</span>`}}
+ if(!cls&&restartMsg){cls='amb';html=`<button id="banX">Dismiss</button>${restartMsg}<span class="sm">Usually a power cut or supply dip. Check outputs are as expected.</span>`}
+ b.className=cls;b.innerHTML=html;main.classList.toggle('stale',cls==='red');
+ const x=$('banX');if(x)x.onclick=()=>{restartMsg='';banner()}}
+
+// ---------- LAN path
+async function loadCfgLan(){try{showCfg(await req('/api/cfg',2000))}catch(e){}}
+async function poll(){const t0=performance.now();
+ try{const s=await req('/api/state',1200);fail=0;if(lostAt){lostAt=0;log('Device responding again')}
+  chip('cLink','ok','LINK '+Math.round(performance.now()-t0)+' ms');onState(s);if(!cfg)loadCfgLan()}
+ catch(e){if(++fail>=2){chip('cLink','','LINK LOST');if(!lostAt){lostAt=Date.now();log('Device not responding')}}}
+ enable();banner();setTimeout(poll,500)}
+
+// ---------- MQTT path
 function loadKeys(){try{const k=JSON.parse(localStorage.getItem('rwisio')||'{}');
  ['Host','Port','Path','User','Dev'].forEach(n=>{if(k[n])$('k'+n).value=k[n]});
  if(k.Pass){$('kPass').value=k.Pass;$('kRem').checked=true}return !!(k.Host&&k.User)}catch(e){return false}}
 function saveKeys(){try{const k={};['Host','Port','Path','User','Dev'].forEach(n=>k[n]=$('k'+n).value);
  if($('kRem').checked)k.Pass=$('kPass').value;localStorage.setItem('rwisio',JSON.stringify(k))}catch(e){}}
-
-// ---- MQTT
 function connect(){
  if(cli){cli.end(true);cli=null}
  const host=$('kHost').value.trim(),port=$('kPort').value,path=$('kPath').value||'/mqtt';
@@ -98,87 +294,55 @@ function connect(){
  const c=cli=mqtt.connect(`wss://${host}:${port}${path}`,{username:$('kUser').value,password:$('kPass').value,
   clientId:'rwis-remote-'+CID,clean:true,reconnectPeriod:2000,connectTimeout:8000,keepalive:15});
  cli.on('connect',()=>{if(c!==cli)return;chip('cBroker','ok','BROKER OK');log('Broker connected');$('conn').open=false;
-  cli.subscribe([base+'state',base+'ack',base+'status',base+'cfg'],{qos:1});enable();
-  clearInterval(hbT);hbT=setInterval(()=>{if(devOnline)pub({t:'hb',i:0,v:0})},3000)});
+  cli.subscribe(['state','ack','status','cfg','event','hist'].map(t=>base+t),{qos:1});enable();
+  clearInterval(hbT);hbT=setInterval(()=>{if(devOnline)cmd({t:'hb',i:0,v:0}).catch(()=>{})},3000)});
  cli.on('reconnect',()=>c===cli&&chip('cBroker','wn','RECONNECTING'));
  cli.on('close',()=>{if(c!==cli)return;chip('cBroker','','BROKER OFF');enable()});
  cli.on('error',e=>{log('Broker error: '+e.message);if(/auth|Not authorized|Bad user/i.test(e.message))cli.end(true)});
  cli.on('message',(topic,buf)=>{if(c!==cli)return;const m=buf.toString(),leaf=topic.slice(base.length);
-  if(leaf=='status'){const was=devOnline;devOnline=m=='online';if(!devOnline&&was!==false)offSince=Date.now();if(!devOnline&&!offSince)offSince=-1;if(devOnline)offSince=0;chip('cDev',devOnline?'ok':'',devOnline?'DEVICE ONLINE':'DEVICE OFFLINE');log('Device '+m);enable();return}
+  if(leaf=='status'){const was=devOnline;devOnline=m=='online';
+   if(!devOnline&&was)offSince=Date.now();if(!devOnline&&!offSince)offSince=-1;
+   if(devOnline){offSince=0;if(!was)setTimeout(loadHistory,1500)}
+   chip('cDev',devOnline?'ok':'',devOnline?'DEVICE ONLINE':'DEVICE OFFLINE');log('Device '+m);enable();return}
   let j;try{j=JSON.parse(m)}catch(e){return}
-  if(leaf=='state'){if(devOnline)lastState=Date.now();if(j.ts)lastTs=j.ts*1000;checkBoot(j);apply(j)}
+  if(leaf=='state'){if(devOnline)onState(j);else{if(j.ts)lastTs=j.ts*1000}}
   else if(leaf=='cfg')showCfg(j)
+  else if(leaf=='event')addEvents([j])
+  else if(leaf=='hist'){if(histBuf&&j.cid==CID&&j.k==histBuf.k){histBuf.d.push(...j.d);if(j.last){const h=histBuf;histBuf=null;h.done();h.res(h.d)}}}
   else if(leaf=='ack'&&j.cid==CID&&waiters[j.seq]){waiters[j.seq](j);delete waiters[j.seq]}});
 }
-function pub(o){const s=++seq;o.seq=s;o.cid=CID;cli.publish(base+'cmd',JSON.stringify(o),{qos:1});return s}
-function await_ack(s){return new Promise((res,rej)=>{waiters[s]=res;setTimeout(()=>{if(waiters[s]){delete waiters[s];rej('timeout')}},TIMEOUT)})}
+function kick(why){if(!cli)return;log('Reconnecting ('+why+')');lastState=0;devOnline=false;connect()}
+function startMqtt(){
+ document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'||!cli)return;if(!cli.connected||Date.now()-lastState>8000)kick('resumed')});
+ window.addEventListener('online',()=>kick('network back'));
+ setInterval(()=>{if(cli&&cli.connected&&devOnline&&lastState&&Date.now()-lastState>12000)kick('stale link')},2000);
+ setInterval(()=>{if(!lastState)return;const a=(Date.now()-lastState)/1000;chip('cAge',a<8?'ok':a<20?'wn':'',a<8?'DATA LIVE':`DATA ${Math.round(a)}s OLD`)},1000);
+ setInterval(banner,1000);
+ $('cBroker').onclick=()=>{if(cli)kick('manual');else connect()};
+ $('bConn').onclick=connect;
+ $('bDisc').onclick=()=>{if(cli){cli.end(true);cli=null}clearInterval(hbT);devOnline=false;chip('cDev','','DEVICE ?');enable()};
+ if(loadKeys()&&$('kPass').value)connect();else $('conn').open=true}
 
-async function send(t,i,v,tries=0){
- if(!(cli&&cli.connected)){log('Not connected');return}
- const k=(t=='do'?'do':t=='pwm'?'pd':'pf')+i,t0=performance.now();busy[k]=1;mark(k,'pend');
- try{const s=pub({t,i,v:Number(v)});const j=await await_ack(s);const ms=Math.round(performance.now()-t0);
-  if(j.ok){mark(k,'ack');log(`ACK #${s} ${t}${i+1} req=${j.req} act=${j.act} ${ms}ms`)}
-  else{mark(k,'err');log(`NAK #${s} ${t}${i+1} ${j.err} req=${j.req} act=${j.act}`)}}
- catch(e){if(tries<TRIES-1){log(`retry ${t}${i+1} (${tries+1})`);delete busy[k];return send(t,i,v,tries+1)}
-  mark(k,'err');log(`NO ACK ${t}${i+1} — command not confirmed`)}
- finally{delete busy[k]}}
-
-function apply(s){
- s.di.forEach((v,i)=>$('di'+i).classList.toggle('on',!!v));
- s.do.forEach((v,i)=>{const b=$('do'+i);if(!busy['do'+i]){b.classList.toggle('on',!!v);b.textContent=`DO${i+1} ${v?'ON':'OFF'}`}});
- s.pwm.forEach((p,i)=>{if(!busy['pd'+i]&&document.activeElement!==$('pd'+i)){$('pd'+i).value=p.pct;$('pp'+i).textContent=p.pct+'%'}
-  if(!busy['pf'+i]&&document.activeElement!==$('pf'+i))$('pf'+i).value=p.f});
- s.adc.forEach((a,i)=>{$('av'+i).textContent=a.val.toFixed(3)+' '+a.u;$('ar'+i).textContent=`${a.mv} mV  raw ${a.raw}`});
- $('fs').textContent=s.fsTrip?'FAILSAFE TRIPPED':'';
- $('info').textContent=`RSSI ${s.rssi} dBm · up ${s.up}s · rev ${s.rev}${s.ap?' · AP MODE':''}`}
-function showCfg(c){for(let i=0;i<2;i++){if(document.activeElement!==$('cs'+i))$('cs'+i).value=c.s[i];
- if(document.activeElement!==$('co'+i))$('co'+i).value=c.o[i];if(document.activeElement!==$('cu'+i))$('cu'+i).value=c.u[i]}
- if(document.activeElement!==$('fsS'))$('fsS').value=c.fs}
-async function saveCfg(){const o={t:'cfg',i:0,v:0,fs:Number($('fsS').value)};
- for(let i=0;i<2;i++){o['s'+i]=Number($('cs'+i).value);o['o'+i]=Number($('co'+i).value);o['u'+i]=$('cu'+i).value.replace(/"/g,'')}
- try{const j=await await_ack(pub(o));$('cfgMsg').textContent=j.ok?'Saved ✓':'Error';log('Settings saved')}
- catch(e){$('cfgMsg').textContent='No reply';log('Settings NOT confirmed')}
- setTimeout(()=>$('cfgMsg').textContent='',2500)}
-
-// ---- mobile resilience: phones freeze sockets in background / on cell handover
-function kick(why){if(!cli)return;log('Reconnecting ('+why+')');lastState=0;devOnline=false;connect()}   // fresh client = same as page refresh
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState!=='visible'||!cli)return;
- if(!cli.connected||Date.now()-lastState>8000)kick('resumed')});
-window.addEventListener('online',()=>kick('network back'));
-// ESP32 publishes state at least every 5 s; silence for 12 s while 'connected' = dead socket
-setInterval(()=>{if(cli&&cli.connected&&devOnline&&lastState&&Date.now()-lastState>12000)kick('stale link')},2000);
-
-// ---- restart / power-loss detection (boot counter survives page closing via localStorage)
-function fmt(ms){const d=new Date(ms);return d.toLocaleTimeString('en-GB')+(new Date().toDateString()===d.toDateString()?'':' '+d.toLocaleDateString('en-GB'))}
-function checkBoot(j){if(!j.boot)return;let prev=0;try{prev=+localStorage.getItem('rwisio_boot_'+base)||0;localStorage.setItem('rwisio_boot_'+base,j.boot)}catch(e){}
- if(prev&&j.boot!==prev){const at=Date.now()-j.up*1000;
-  restartMsg=`Device restarted at ${fmt(at)} — reason: ${j.rst}.`+(j.restored?' Outputs restored to their previous state.':' Outputs are OFF.');
-  log('RESTART: '+j.rst+(j.restored?' (outputs restored)':''))}}
-function banner(){const b=$('ban'),main=document.querySelector('main');let cls='',html='';
- const broker=cli&&cli.connected,age=lastState?(Date.now()-lastState)/1000:1e9;
- if(cli&&!broker){cls='red';html='NO CONNECTION TO SERVER<span class="sm">This phone/PC cannot reach the broker — check its internet connection. Tap BROKER to retry.</span>'}
- else if(broker&&!devOnline&&offSince){cls='red';const since=offSince>0?fmt(offSince):(lastTs?'last data '+fmt(lastTs):'unknown');
-  html=`DEVICE OFFLINE — since ${since}<span class="sm">Power loss at site, or site WiFi/internet down. Values shown are the last known and may be out of date.</span>`}
- else if(broker&&devOnline&&age>12){cls='amb';html=`NO DATA FOR ${age>1e8?'—':Math.round(age)+' s'}<span class="sm">Link may be stalled — reconnecting automatically.</span>`}
- else if(restartMsg){cls='amb';html=`<button id="banX">Dismiss</button>${restartMsg}<span class="sm">Usually a power cut or supply dip. Check outputs are as expected.</span>`}
- b.className=cls;b.innerHTML=html;main.classList.toggle('stale',cls==='red');
- const x=$('banX');if(x)x.onclick=()=>{restartMsg='';banner()}}
-setInterval(banner,1000);
-
-// data-age chip: shows staleness of last state message
-setInterval(()=>{if(!lastState)return;const a=(Date.now()-lastState)/1000;
- chip('cAge',a<8?'ok':a<20?'wn':'',a<8?'DATA LIVE':`DATA ${Math.round(a)}s OLD`)},1000);
-
-// ---- events
+// ---------- events
 for(let i=0;i<4;i++)$('do'+i).onclick=()=>send('do',i,$('do'+i).classList.contains('on')?0:1);
 for(let i=0;i<2;i++){$('pd'+i).oninput=e=>$('pp'+i).textContent=e.target.value+'%';
  $('pd'+i).onchange=e=>send('pwm',i,e.target.value);$('bf'+i).onclick=()=>send('freq',i,$('pf'+i).value)}
 $('bOff').onclick=async()=>{for(let i=0;i<4;i++)await send('do',i,0);for(let i=0;i<2;i++)await send('pwm',i,0)};
-$('bSave').onclick=saveCfg;$('cBroker').onclick=()=>{if(cli)kick('manual');else connect()};$('bConn').onclick=connect;
-$('bDisc').onclick=()=>{if(cli){cli.end(true);cli=null}clearInterval(hbT);devOnline=false;chip('cDev','','DEVICE ?');enable()};
+$('bSave').onclick=()=>saveCfg('cfgMsg');$('aSave').onclick=()=>saveCfg('aMsg');$('aTest').onclick=testAlert;
+$('aGen').onclick=()=>{const a=new Uint8Array(12);crypto.getRandomValues(a);$('aNt').value='rwis-'+[...a].map(b=>(b%36).toString(36)).join('');hint()};
+$('aNt').oninput=hint;
+$('tabs').onclick=e=>{const t=e.target.dataset.t;if(!t)return;tab=t;[...$('tabs').children].forEach(b=>b.classList.toggle('sel',b.dataset.t===t));
+ $('vTr').hidden=t!=='tr';$('vEv').hidden=t!=='ev';$('rng').style.visibility=t==='tr'?'visible':'hidden';draw()};
+$('rng').onclick=e=>{const r=+e.target.dataset.r;if(!r)return;range=r;[...$('rng').children].forEach(b=>b.classList.toggle('sel',+b.dataset.r===r));draw()};
+$('hRef').onclick=()=>{fetchTrend(true);fetchEvents()};$('hCsv').onclick=csv;
+$('chart').addEventListener('pointermove',hover);$('chart').addEventListener('pointerdown',hover);
+const ro=new ResizeObserver(draw);ro.observe($('chart'));
+setInterval(()=>{if(LAN?!lostAt:devOnline)fetchTrend(false)},300000);          // top up trend every 5 min
+legend();renderEvents();enable();
 
-enable();
-if(typeof mqtt==='undefined'){log('MQTT library failed to load — check internet connection');}
-else if(loadKeys()&&$('kPass').value)connect();else $('conn').open=true;
+if(LAN){$('pConn').hidden=true;['cBroker','cDev','cAge'].forEach(c=>$(c).hidden=true);$('cLink').hidden=false;
+ poll();setTimeout(loadHistory,800)}
+else{const sc=document.createElement('script');sc.src='https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js';
+ sc.onload=startMqtt;sc.onerror=()=>log('MQTT library failed to load — check internet connection');document.head.appendChild(sc)}
 }
 </script></body></html>
